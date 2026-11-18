@@ -248,3 +248,112 @@ new MutationObserver(() => {
     clearStoredUrls();
   }
 }).observe(document, { subtree: true, childList: true });
+// --- Right-Click Context Menu Handlers & Toast Notification ---
+function showCopyToast(message) {
+  const existing = document.getElementById('url-cleaner-toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'url-cleaner-toast';
+  toast.textContent = message;
+  Object.assign(toast.style, {
+    position: 'fixed',
+    bottom: '24px',
+    right: '24px',
+    zIndex: '999999',
+    background: '#1d9bf0',
+    color: '#ffffff',
+    padding: '10px 16px',
+    borderRadius: '8px',
+    fontSize: '13px',
+    fontWeight: '600',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+    transition: 'opacity 0.25s ease',
+  });
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 2200);
+}
+
+function extractCleanUrlsFromText(rawText) {
+  let text = rawText, prev;
+  do {
+    prev = text;
+    text = text.replace(
+      /(https?:\/\/[^\s]*?)[\r\n]+(?!https?:\/\/)([^\s]+)/g,
+      '$1$2'
+    );
+  } while (text !== prev);
+
+  const matches = text.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/g) || [];
+  const cleaned = matches
+    .map((u) => u.replace(/[.,;:!?…)]+$/, '')) // strip trailing punctuation/ellipses
+    .filter((u) => {
+      try {
+        const host = new URL(u).hostname;
+        return !/(^|\.)(x\.com|twitter\.com|t\.co)$/i.test(host);
+      } catch {
+        return false;
+      }
+    });
+
+  return [...new Set(cleaned)];
+}
+
+function extractCleanUrlsFromSelectionOrPage(mode, fallbackText = '') {
+  const urls = new Set();
+
+  if (mode === 'SELECTION') {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const fragment = sel.getRangeAt(0).cloneContents();
+      fragment.querySelectorAll('a[href^="http"]').forEach((a) => {
+        try {
+          const host = new URL(a.href).hostname;
+          if (!/(^|\.)(x\.com|twitter\.com|t\.co)$/i.test(host)) {
+            urls.add(a.href);
+          }
+        } catch {}
+      });
+    }
+    // Fallback / supplement from raw selected text in case links weren't <a> tags
+    extractCleanUrlsFromText(sel?.toString() || fallbackText).forEach((u) =>
+      urls.add(u)
+    );
+  } else {
+    // PAGE mode: collect all resolved external links inside visible tweet articles
+    document.querySelectorAll('article a[href^="http"]').forEach((a) => {
+      try {
+        const host = new URL(a.href).hostname;
+        if (!/(^|\.)(x\.com|twitter\.com|t\.co)$/i.test(host)) {
+          urls.add(a.href);
+        }
+      } catch {}
+    });
+  }
+
+  return [...urls];
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action !== 'COPY_PAGE_URLS' && msg.action !== 'COPY_SELECTION_URLS') {
+    return;
+  }
+
+  const urls = extractCleanUrlsFromSelectionOrPage(
+    msg.action === 'COPY_SELECTION_URLS' ? 'SELECTION' : 'PAGE',
+    msg.selectionText
+  );
+
+  if (urls.length === 0) {
+    showCopyToast('No external URLs found');
+    return;
+  }
+
+  navigator.clipboard.writeText(urls.join('\n')).then(() => {
+    showCopyToast(`Copied ${urls.length} clean URL${urls.length === 1 ? '' : 's'}`);
+  });
+});
