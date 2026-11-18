@@ -235,3 +235,16 @@ chrome.storage.sync.get(URL_CLEANER_DEFAULTS, (stored) => {
   if (!chrome.runtime.lastError && stored) settings = stored;
   start();
 });
+// Reset stored URLs when navigating to a new page/post on X so "Copy All" stays scoped to the current view
+let lastHref = location.href;
+function clearStoredUrls() {
+  chrome.storage?.local?.clear?.();
+}
+clearStoredUrls();
+
+new MutationObserver(() => {
+  if (location.href !== lastHref) {
+    lastHref = location.href;
+    clearStoredUrls();
+  }
+}).observe(document, { subtree: true, childList: true });
